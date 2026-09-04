@@ -189,6 +189,11 @@
     <textarea id="script" placeholder="Apni poori script yahan paste karein..."></textarea>
   </div>
 
+  <div class="field">
+    <label for="manualScenes">Manual Scenes (Optional — behtar result ke liye)</label>
+    <textarea id="manualScenes" placeholder="Agar khud 12 scenes likhna chahte hain to har line mein ek scene likhein (English mein, jaise: sunset over city / man reading book / busy street market). Khali chhod dein to script se khud nikaal lega."></textarea>
+  </div>
+
   <button class="btn-primary" id="genBtn">12 Tasveerein Banao</button>
   <button class="btn-secondary" id="pdfBtn" disabled>PDF Download Karo</button>
   <div class="status" id="status"></div>
@@ -204,7 +209,37 @@ const pdfBtn = document.getElementById('pdfBtn');
 const statusEl = document.getElementById('status');
 const grid = document.getElementById('grid');
 const scriptEl = document.getElementById('script');
+const manualEl = document.getElementById('manualScenes');
 const keyEl = document.getElementById('pexelsKey');
+
+const STOPWORDS = new Set(['the','a','an','and','or','but','is','are','was','were','be','been','being','to','of','in','on','at','for','with','by','from','as','it','its','this','that','these','those','he','she','they','we','you','i','him','her','them','his','their','my','our','your','not','no','do','does','did','so','if','then','than','into','over','under','out','up','down','about','after','before','when','while','because','just','very','can','will','would','could','should','has','have','had','also','all','some','one','two','more','most','there','here','who','what','which','how','why']);
+
+function splitScriptToPhrases(script, count){
+  const words = script.replace(/[\r\n]+/g,' ').split(/\s+/).filter(Boolean);
+  if(words.length === 0) return new Array(count).fill('cinematic scene');
+  const chunkSize = Math.max(1, Math.ceil(words.length / count));
+  const phrases = [];
+  for(let i=0; i<count; i++){
+    const chunkWords = words.slice(i*chunkSize, (i+1)*chunkSize);
+    if(chunkWords.length === 0){
+      phrases.push(phrases.length ? phrases[phrases.length-1] : 'cinematic scene');
+      continue;
+    }
+    const candidates = chunkWords
+      .map(w => w.replace(/[^a-zA-Z]/g,''))
+      .filter(w => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
+    let picked = candidates.length ? candidates : chunkWords.map(w => w.replace(/[^a-zA-Z]/g,'')).filter(Boolean);
+    picked = [...new Set(picked.map(w => w.toLowerCase()))].slice(0, 4);
+    phrases.push(picked.length ? picked.join(' ') : 'cinematic scene');
+  }
+  return phrases;
+}
+
+function getManualPhrases(){
+  const lines = manualEl.value.split('\n').map(l => l.trim()).filter(Boolean);
+  if(lines.length === 12) return lines;
+  return null;
+}
 
 let imageDataUrls = new Array(12).fill(null);
 
@@ -239,26 +274,6 @@ function failSlot(i, caption){
     '<div class="fail">Nahi mili: ' + caption + '</div>';
 }
 
-async function getScenePhrases(script){
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      system: 'You convert a script into exactly 12 short visual scene descriptions, in chronological order, that best represent the script for a storyboard. Each description must be a concise English stock-photo search phrase (2-5 words), concrete and visual (nouns and settings, not abstract ideas). Respond with ONLY a raw JSON array of exactly 12 strings. No markdown, no preamble, no code fences.',
-      messages: [{ role: 'user', content: script }]
-    })
-  });
-  const data = await resp.json();
-  const textBlock = data.content.find(b => b.type === 'text');
-  if(!textBlock) throw new Error('no-text');
-  let clean = textBlock.text.trim().replace(/^```json/,'').replace(/^```/,'').replace(/```$/,'').trim();
-  const arr = JSON.parse(clean);
-  if(!Array.isArray(arr) || arr.length !== 12) throw new Error('bad-shape');
-  return arr;
-}
-
 async function fetchPexelsImage(query, apiKey){
   const resp = await fetch('https://api.pexels.com/v1/search?per_page=1&orientation=landscape&query=' + encodeURIComponent(query), {
     headers: { 'Authorization': apiKey }
@@ -290,16 +305,9 @@ genBtn.addEventListener('click', async () => {
   pdfBtn.disabled = true;
   imageDataUrls = new Array(12).fill(null);
   buildSlots();
-  setStatus('Script parh kar 12 scenes nikal rahe hain...');
 
-  let phrases;
-  try{
-    phrases = await getScenePhrases(script);
-  } catch(err){
-    setStatus('Scenes banane mein masla hua. Dobara koshish karein.', true);
-    genBtn.disabled = false;
-    return;
-  }
+  const manualPhrases = getManualPhrases();
+  const phrases = manualPhrases || splitScriptToPhrases(script, 12);
 
   setStatus('Tasveerein dhoondi ja rahi hain...');
 
